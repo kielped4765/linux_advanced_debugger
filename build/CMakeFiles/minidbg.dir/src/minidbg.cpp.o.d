@@ -181,6 +181,7 @@ CMakeFiles/minidbg.dir/src/minidbg.cpp.o: \
  /usr/include/c++/13/bits/ostream.tcc \
  /usr/include/c++/13/bits/istream.tcc \
  /usr/include/c++/13/bits/sstream.tcc /usr/include/c++/13/iostream \
+ /usr/include/x86_64-linux-gnu/sys/personality.h \
  /mnt/c/Users/peder/debugger/ext/linenoise/linenoise.h \
  /mnt/c/Users/peder/debugger/include/debugger.hpp \
  /usr/include/linux/types.h /usr/include/x86_64-linux-gnu/asm/types.h \

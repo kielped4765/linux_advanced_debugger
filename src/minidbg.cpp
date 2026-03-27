@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sstream>
 #include <iostream>
+#include <sys/personality.h>
 
 #include "linenoise.h"
 
@@ -35,6 +36,12 @@ void debugger::handle_command(const std::string& line) {
     if (is_prefix(command, "cont")) {
         continue_execution();
     }
+
+    else if (is_prefix(command, "break")) {
+        std::string addr {args[1], 2}; //strips the 0x prefix
+        set_breakpoint_at_address(std::stol(addr, 0, 16));
+    }
+
     else {
         std::cerr << "Unknown command\n";
     }
@@ -61,6 +68,13 @@ void debugger::continue_execution() {
     waitpid(m_pid, &wait_status, options);
 }
 
+void debugger::set_breakpoint_at_address(std::intptr_t addr) {
+    std::cout << "Set breakpoint at address 0x" << std::hex << addr << std::endl;
+    breakpoint bp {m_pid, addr};
+    bp.enable();
+    m_breakpoints[addr] = bp;
+}
+
 void execute_debugee (const std::string& prog_name) {
     if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0) {
         std::cerr << "Error in ptrace\n";
@@ -78,8 +92,10 @@ int main(int argc, char* argv[]) {
     auto prog = argv[1];
 
     auto pid = fork();
+
     if (pid == 0) {
         //child
+        personality(ADDR_NO_RANDOMIZE);
         execute_debugee(prog);
 
     }
