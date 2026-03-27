@@ -1,0 +1,7 @@
+/mnt/c/Users/peder/debugger/build/CMakeFiles/minidbg.dir
+/mnt/c/Users/peder/debugger/build/CMakeFiles/hello.dir
+/mnt/c/Users/peder/debugger/build/CMakeFiles/variable.dir
+/mnt/c/Users/peder/debugger/build/CMakeFiles/unwinding.dir
+/mnt/c/Users/peder/debugger/build/CMakeFiles/libelfin.dir
+/mnt/c/Users/peder/debugger/build/CMakeFiles/edit_cache.dir
+/mnt/c/Users/peder/debugger/build/CMakeFiles/rebuild_cache.dir
