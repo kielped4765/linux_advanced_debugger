@@ -1,45 +1,111 @@
-#ifndef MINDBG_REGISTERS_HPP
-#define MINDBG_REGISTERS_HPP
+#ifndef MINIDBG_REGISTERS_HPP
+#define MINIDBG_REGISTERS_HPP
 
+#include <sys/user.h>
+#include <sys/ptrace.h>
+#include <algorithm>
+#include <array>
 #include <string>
-#include <linux/types.h>
-#include <unordered_map>
-#include <iomanip>
+#include <stdexcept>
 
-#include "breakpoint.hpp"
-#include "registers.hpp"
+namespace minidbg {
 
-namespace mindbg {
-
-class debugger {
-public:
-    debugger(std::string prog_name, pid_t_pid)
-        : m_prog_name{std::move(prog_name)}, m_pid{pid} {}
-
-    void run();
-
-private:
-    void handle_command(const std::string& line);
-    void continue_execution();
-    void set_breakpoint_at_address(std::intptr_t addr);
-    void dump_registers();
-    void step_over_breakpoint();
-    void wait_for_signal();
-
-    // Memory
-    uint64_t read_memory(uint64_t address);
-    void write_memory(uint64_t address, uint64_t value);
-
-    // Program counter helpers
-    uint64_t get_pc();
-    void set_pc(uint64_t pc);
-
-    std::string m_prog_name;
-    pid_t m_pid;
-    std::unordered_map<std::intptr_t, breakpoint> m_breakpoint;
+// Every x86-64 register gets a name in this enum
+enum class reg {
+    rax, rbx, rcx, rdx,
+    rdi, rsi, rbp, rsp,
+    r8,  r9,  r10, r11,
+    r12, r13, r14, r15,
+    rip, rflags,    cs,
+    orig_rax, fs_base,
+    gs_base,
+    fs, gs, ss, ds, es
 };
 
+constexpr std::size_t n_registers = 27;
 
-} // namespace mindbg
+// Describes each register: its enum value, DWARF number, and string name
+struct reg_descriptor {
+    reg r;
+    int dwarf_r;
+    std::string name;
+};
+
+// This table MUST be in the same order as user_regs_struct in <sys/user.h>
+// That's what lets us do the pointer arithmetic trick to read any register
+const std::array<reg_descriptor, n_registers> g_register_descriptors {{
+    { reg::r15,      15, "r15" },
+    { reg::r14,      14, "r14" },
+    { reg::r13,      13, "r13" },
+    { reg::r12,      12, "r12" },
+    { reg::rbp,       6, "rbp" },
+    { reg::rbx,       3, "rbx" },
+    { reg::r11,      11, "r11" },
+    { reg::r10,      10, "r10" },
+    { reg::r9,        9, "r9"  },
+    { reg::r8,        8, "r8"  },
+    { reg::rax,       0, "rax" },
+    { reg::rcx,       2, "rcx" },
+    { reg::rdx,       1, "rdx" },
+    { reg::rsi,       4, "rsi" },
+    { reg::rdi,       5, "rdi" },
+    { reg::orig_rax, -1, "orig_rax" },
+    { reg::rip,      -1, "rip" },
+    { reg::cs,       51, "cs"  },
+    { reg::rflags,   49, "eflags" },
+    { reg::rsp,       7, "rsp" },
+    { reg::ss,       52, "ss"  },
+    { reg::fs_base,  58, "fs_base" },
+    { reg::gs_base,  59, "gs_base" },
+    { reg::ds,       53, "ds"  },
+    { reg::es,       50, "es"  },
+    { reg::fs,       54, "fs"  },
+    { reg::gs,       55, "gs"  },
+}};
+
+// Read a register value from the child process
+inline uint64_t get_register_value(pid_t pid, reg r) {
+    user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, pid, nullptr, &regs);
+    auto it = std::find_if(begin(g_register_descriptors), end(g_register_descriptors),
+                           [r](auto&& rd) { return rd.r == r; });
+    return *(reinterpret_cast<uint64_t*>(&regs) + (it - begin(g_register_descriptors)));
+}
+
+// Write a value into a register in the child process
+inline void set_register_value(pid_t pid, reg r, uint64_t value) {
+    user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, pid, nullptr, &regs);
+    auto it = std::find_if(begin(g_register_descriptors), end(g_register_descriptors),
+                           [r](auto&& rd) { return rd.r == r; });
+    *(reinterpret_cast<uint64_t*>(&regs) + (it - begin(g_register_descriptors))) = value;
+    ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+}
+
+// Look up a register by its DWARF number (used later for debug info)
+inline uint64_t get_register_value_from_dwarf_register(pid_t pid, unsigned regnum) {
+    auto it = std::find_if(begin(g_register_descriptors), end(g_register_descriptors),
+                           [regnum](auto&& rd) { return rd.dwarf_r == (int)regnum; });
+    if (it == end(g_register_descriptors)) {
+        throw std::out_of_range{"Unknown dwarf register"};
+    }
+    return get_register_value(pid, it->r);
+}
+
+// Get a register's string name from its enum value
+inline std::string get_register_name(reg r) {
+    auto it = std::find_if(begin(g_register_descriptors), end(g_register_descriptors),
+                           [r](auto&& rd) { return rd.r == r; });
+    return it->name;
+}
+
+// Get a register's enum value from its string name
+inline reg get_register_from_name(const std::string& name) {
+    auto it = std::find_if(begin(g_register_descriptors), end(g_register_descriptors),
+                           [name](auto&& rd) { return rd.name == name; });
+    return it->r;
+}
+
+} // namespace minidbg
 
 #endif
