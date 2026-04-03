@@ -4,8 +4,10 @@
 #include <string>
 #include <linux/types.h>
 #include <unordered_map>
+#include <iomanip>
 
 #include "breakpoint.hpp"
+#include "registers.hpp"
 
 namespace minidbg {
 
@@ -20,6 +22,17 @@ private:
     void handle_command(const std::string& line);
     void continue_execution();
     void set_breakpoint_at_address(std::intptr_t addr);
+    void dump_registers();
+    void step_over_breakpoint();
+    void wait_for_signal();
+
+    // Memory 
+    uint64_t read_memory(uint64_t address);
+    void write_memory(uint64_t address, uint64_t value);
+
+    // Program counter helpers
+    uint64_t get_pc();
+    void set_pc(uint64_t pc);
 
     std::string m_prog_name;
     pid_t m_pid;
