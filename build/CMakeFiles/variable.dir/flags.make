@@ -6,5 +6,5 @@ CXX_DEFINES =
 
 CXX_INCLUDES = -I/mnt/c/Users/peder/debugger/ext/libelfin -I/mnt/c/Users/peder/debugger/ext/linenoise -I/mnt/c/Users/peder/debugger/include
 
-CXX_FLAGS = -gdwarf-2 -O0 -std=c++14
+CXX_FLAGS = -gdwarf-4 -O0 -std=c++14
 
