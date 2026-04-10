@@ -32,6 +32,7 @@ public:
     void step_in();
     void step_out();
     void step_over_breakpoint();
+    void read_variables();
 
     // --- Breakpoint Logic ---
     void set_breakpoint_at_address(std::intptr_t addr);
@@ -53,6 +54,7 @@ private:
     void print_source(const std::string& file_name, unsigned line, unsigned n_lines_context = 2);
     void handle_sigtrap(siginfo_t info);
     siginfo_t get_signal_info();
+    void print_backtrace();
 
     // --- DWARF / ELF Helpers ---
     dwarf::die get_function_from_pc(uint64_t pc);

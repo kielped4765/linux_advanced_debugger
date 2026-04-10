@@ -15,6 +15,60 @@
 #include "debugger.hpp"
 #include "registers.hpp"
 
+namespace minidbg {
+
+    class ptrace_expr_context : public dwarf::expr_context {
+    public:
+        ptrace_expr_context (pid_t pid) : m_pid{pid} {}
+
+        dwarf::taddr reg (unsigned regnum) override {
+            return get_register_value_from_dwarf_register(m_pid, regnum);
+        }
+
+        dwarf::taddr pc() override {
+            struct user_regs_struct regs; 
+            ptrace(PTRACE_GETREGS, m_pid, nullptr, &regs);
+            return regs.rip;
+        }
+
+        dwarf::taddr deref_size (dwarf::taddr address, unsigned size) override {
+            return ptrace(PTRACE_PEEKDATA, m_pid, address, nullptr);
+        }
+    private:
+        pid_t m_pid;
+    }; // <--- Ensure this semicolon is here!
+
+    void debugger::read_variables() {
+        auto func = get_function_from_pc(offset_load_address(get_pc()));
+
+        for (const auto& die : func) {
+            if (die.tag == dwarf::DW_TAG::variable || die.tag == dwarf::DW_TAG::formal_parameter) {
+                auto loc_val = die[dwarf::DW_AT::location];
+
+                if (loc_val.get_type() == dwarf::value::type::exprloc) {
+                    ptrace_expr_context context {m_pid};
+                    auto result = loc_val.as_exprloc().evaluate(&context);
+
+                    switch (result.location_type) {
+                        case dwarf::expr_result::type::address: {
+                            auto value = read_memory(result.value);
+                            std::cout << dwarf::at_name(die) << " (0x" << std::hex << result.value << ") = " << value << std::dec << std::endl;
+                            break;
+                        }
+                        case dwarf::expr_result::type::reg: {
+                            auto value = get_register_value_from_dwarf_register(m_pid, result.value);
+                            std::cout << dwarf::at_name(die) << " (reg " << result.value << ") = " << value << std::dec << std::endl;
+                            break;
+                        }
+                        default:
+                            throw std::runtime_error{"Unhandled variable location"};
+                    }
+                }
+            }
+        }
+    }
+} // end namespace minidbg
+
 using namespace minidbg;
 
 /**
@@ -64,11 +118,30 @@ uint64_t debugger::offset_load_address(uint64_t addr) {
     return addr - m_load_address;
 }
 
+// Helper function to search DIEs recursively
+dwarf::die search_dwarf_recursive(const dwarf::die& die, uint64_t pc) {
+    if (die.tag == dwarf::DW_TAG::subprogram && die.has(dwarf::DW_AT::low_pc)) {
+        if (dwarf::die_pc_range(die).contains(pc)) {
+            return die;
+        }
+    }
+    // Search children
+    for (auto child : die) {
+        try {
+            return search_dwarf_recursive(child, pc);
+        } catch (const std::out_of_range&) {
+            continue; 
+        }
+    }
+    throw std::out_of_range{"Cannot find function"};
+}
+
 dwarf::die debugger::get_function_from_pc(uint64_t pc) {
     for (auto &cu : m_dwarf.compilation_units()) {
         if (dwarf::die_pc_range(cu.root()).contains(pc)) {
-            for (const auto& die : cu.root()) {
-                if (die.tag == dwarf::DW_TAG::subprogram) {
+            // The libdwarf++ iterator walks the entire tree depth-first
+            for (auto die : cu.root()) {
+                if (die.tag == dwarf::DW_TAG::subprogram && die.has(dwarf::DW_AT::low_pc)) {
                     if (dwarf::die_pc_range(die).contains(pc)) {
                         return die;
                     }
@@ -114,6 +187,31 @@ void debugger::print_source(const std::string& file_name, unsigned line, unsigne
         }
     }
     std::cout << std::endl;
+}
+
+void debugger::print_backtrace() {
+    auto output_frame = [frame_number = 0, this] (auto&& func, uint64_t pc) mutable {
+        std::cout << "frame #" << frame_number++ << ": 0x" 
+                  << std::hex << pc << " "
+                  << dwarf::at_name(func) << std::dec << std::endl;
+    };
+
+    uint64_t current_pc = get_pc();
+    auto current_func = get_function_from_pc(offset_load_address(current_pc));
+    output_frame(current_func, current_pc);
+
+    auto frame_pointer = get_register_value(m_pid, reg::rbp);
+
+    while (dwarf::at_name(current_func) != "main") {
+        auto return_address = read_memory(frame_pointer + 8);
+        
+        // Subtract 1 to stay inside the calling function
+        current_func = get_function_from_pc(offset_load_address(return_address - 1));
+        output_frame(current_func, return_address);
+
+        frame_pointer = read_memory(frame_pointer);
+        if (frame_pointer == 0) break;
+    }
 }
 
 /**
@@ -270,20 +368,32 @@ void debugger::handle_command(const std::string& line) {
         continue_execution();
     }
     else if (is_prefix(command, "break")) {
-        if (args.size() < 2) {
-            std::cerr << "Usage: break <addr/func/file:line>\n";
-        } else {
-            std::string arg = args[1];
-            if (arg.find("0x") == 0) {
-                set_breakpoint_at_address(safe_stoll(arg) + m_load_address);
-            } else if (arg.find(':') != std::string::npos) {
-                auto parts = split(arg, ':');
-                set_breakpoint_at_source_line(parts[0], std::stoi(parts[1]));
-            } else {
-                set_breakpoint_at_function(arg);
+    auto arg = args[1];
+    if (is_prefix(arg, "0x")) {
+        set_breakpoint_at_address(safe_stoll(arg));
+    } else {
+        bool found = false;
+        for (auto &cu : m_dwarf.compilation_units()) {
+            for (const auto& die : cu.root()) {
+                // 1. Check if it's a function (subprogram)
+                // 2. Check if it actually HAS a name attribute before calling at_name
+                if (die.tag == dwarf::DW_TAG::subprogram && 
+                    die.has(dwarf::DW_AT::name) && 
+                    dwarf::at_name(die) == arg) {
+                    
+                    auto addr = dwarf::at_low_pc(die) + m_load_address;
+                    set_breakpoint_at_address(addr);
+                    std::cout << "Set breakpoint at function " << arg 
+                              << " (address 0x" << std::hex << addr << ")" << std::endl;
+                    found = true;
+                    break;
+                }
             }
+            if (found) break; 
         }
+        if (!found) std::cerr << "Could not find function " << arg << std::endl;
     }
+}
     else if (is_prefix(command, "step")) {
         step_in();
     }
@@ -292,6 +402,12 @@ void debugger::handle_command(const std::string& line) {
     }
     else if (is_prefix(command, "register")) {
         if (args.size() > 1 && is_prefix(args[1], "dump")) dump_registers();
+    }
+    else if (is_prefix(command, "backtrace")) {
+        print_backtrace();
+    }
+    else if (is_prefix(command, "variables")) {
+        read_variables();
     }
     else {
         std::cerr << "Unknown command\n";

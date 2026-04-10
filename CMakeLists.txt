@@ -17,7 +17,7 @@ set_target_properties(variable
 
 add_executable(unwinding examples/stack_unwinding.cpp)
 set_target_properties(unwinding
-                      PROPERTIES COMPILE_FLAGS "-gdwarf-4 -O0")
+                      PROPERTIES COMPILE_FLAGS "-gdwarf-4 -O0 -fno-omit-frame-pointer")
 # ----------------------------------
 
 add_custom_target(
